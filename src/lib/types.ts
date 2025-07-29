@@ -23,6 +23,7 @@ export interface StatsData {
 }
 
 export type TikTokEvent = 
+  | { type: 'connected', data: { message: string, userAvatar: string } }
   | { type: 'comment'; data: CommentData }
   | { type: 'gift'; data: GiftData }
   | { type: 'stats'; data: StatsData }

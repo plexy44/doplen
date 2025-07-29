@@ -37,8 +37,12 @@ async function createRealtimeStream(username: string, controller: ReadableStream
             throw new Error('User is not live or the session has ended.');
         }
 
+        const userAvatar = await page.evaluate(() => {
+            return (document.querySelector('[data-e2e="live-user-avatar"] img') as HTMLImageElement)?.src || '';
+        });
+
         console.log(`[Puppeteer] Successfully connected to @${username}'s live stream.`);
-        enqueue({ type: 'connected', data: { message: `Connected to @${username}` } });
+        enqueue({ type: 'connected', data: { message: `Connected to @${username}`, userAvatar } });
 
         // Expose a function to Node.js that can be called from the browser context
         await page.exposeFunction('onNewEvent', (event: object) => {
@@ -192,5 +196,3 @@ export async function GET(
         },
     });
 }
-
-    

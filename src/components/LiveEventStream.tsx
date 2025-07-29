@@ -21,6 +21,7 @@ export function LiveEventStream({ username }: LiveEventStreamProps) {
   const [events, setEvents] = useState<(CommentData | GiftData)[]>([]);
   const [isConnected, setIsConnected] = useState(true);
   const [isConnecting, setIsConnecting] = useState(true);
+  const [userAvatar, setUserAvatar] = useState('');
 
   const eventsRef = useRef(events);
   eventsRef.current = events;
@@ -35,9 +36,12 @@ export function LiveEventStream({ username }: LiveEventStreamProps) {
 
     eventSource.onmessage = (event) => {
       const parsedEvent: TikTokEvent = JSON.parse(event.data);
-      setIsConnecting(false);
-
-      if (parsedEvent.type === 'stats') {
+      
+      if (parsedEvent.type === 'connected') {
+        setIsConnecting(false);
+        setUserAvatar(parsedEvent.data.userAvatar);
+      } else if (parsedEvent.type === 'stats') {
+        setIsConnecting(false); // Also set connecting to false on first stats update
         setStats(prevStats => ({...prevStats, ...parsedEvent.data}));
       } else if (parsedEvent.type === 'comment' || parsedEvent.type === 'gift') {
         // Add to the beginning of the array, and keep the list from getting too long
@@ -63,7 +67,7 @@ export function LiveEventStream({ username }: LiveEventStreamProps) {
           toast({
               variant: 'destructive',
               title: 'Connection Failed',
-              description: "Could not connect to the stream. The user may not be live.",
+              description: "Could not connect to the stream. The user may not be live or their account is private.",
           });
       } else {
           toast({
@@ -81,8 +85,6 @@ export function LiveEventStream({ username }: LiveEventStreamProps) {
       eventSource.close();
     };
   }, [username, toast, router, isConnecting]);
-  
-  const userAvatar = `https://p16-sign-va.tiktokcdn.com/tos-maliva-avt-0068/b6489b78652d4317b3f46f32e9da0a47~c5_100x100.jpeg?lk3s=a5d48078&x-expires=1720818000&x-signature=kIuM3YpAP2S4rS1N8qCdV7y10%2BM%3D`;
 
   return (
     <div className="container mx-auto max-w-4xl p-4">
@@ -127,5 +129,3 @@ export function LiveEventStream({ username }: LiveEventStreamProps) {
     </div>
   );
 }
-
-    
