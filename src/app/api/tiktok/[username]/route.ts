@@ -2,11 +2,42 @@
 
 import { NextRequest } from 'next/server';
 import puppeteer, { Browser, Page } from 'puppeteer';
+import fs from 'fs/promises'; // For reading/writing cookies
+
+// Load credentials securely from environment variables
+const TIKTOK_USERNAME = process.env.TIKTOK_USERNAME;
+const TIKTOK_PASSWORD = process.env.TIKTOK_PASSWORD;
+const COOKIES_PATH = './tiktok_cookies.json';
 
 export const dynamic = 'force-dynamic';
 
-// Share one browser instance across requests for efficiency
 let browser: Browser | null = null;
+
+async function loginAndSaveCookies(page: Page) {
+    if (!TIKTOK_USERNAME || !TIKTOK_PASSWORD) {
+        throw new Error('TikTok username or password not set in .env file');
+    }
+
+    console.log('[Puppeteer] No valid cookies found. Performing login...');
+    await page.goto('https://www.tiktok.com/login/phone-or-email/email');
+    
+    // Wait for the form and fill it
+    await page.waitForSelector('input[name="username"]');
+    await page.type('input[name="username"]', TIKTOK_USERNAME);
+    await page.type('input[name="password"]', TIKTOK_PASSWORD);
+    
+    // Click login and wait for navigation
+    await page.click('button[data-e2e="login-button"]');
+    await page.waitForNavigation({ waitUntil: 'networkidle2' });
+
+    // Check for login success (e.g., by looking for a profile icon)
+    await page.waitForSelector('[data-e2e="header-avatar"]');
+    
+    // Save cookies to file
+    const cookies = await page.cookies();
+    await fs.writeFile(COOKIES_PATH, JSON.stringify(cookies, null, 2));
+    console.log('[Puppeteer] Login successful. Cookies saved.');
+}
 
 function createRealtimeStream(username: string) {
     let cleanup: (() => Promise<void>) | null = null;
@@ -46,20 +77,31 @@ function createRealtimeStream(username: string) {
                 page = await browser.newPage();
                 await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
 
+                // --- NEW: LOAD COOKIES OR LOGIN ---
+                try {
+                    const cookiesString = await fs.readFile(COOKIES_PATH, 'utf8');
+                    const cookies = JSON.parse(cookiesString);
+                    await page.setCookie(...cookies);
+                    console.log('[Puppeteer] Session cookies loaded successfully.');
+                } catch (error) {
+                    // If cookies don't exist or are invalid, perform a login
+                    await loginAndSaveCookies(page);
+                }
+                // --- END OF NEW LOGIC ---
+
                 console.log(`[Puppeteer] Navigating to @${username}'s live page...`);
                 await page.goto(`https://www.tiktok.com/@${username}/live`, { waitUntil: 'networkidle2' });
                 
-                // --- NEW: LOGIC TO HANDLE LOGIN MODAL ---
-                try {
+                // This is a good check to make sure the page loaded, even after logging in
+                 try {
                     console.log('[Puppeteer] Checking for login modal...');
                     const closeButtonSelector = 'div[class*="DivLoginModal"] [class*="DivCloseContainer"]';
-                    await page.waitForSelector(closeButtonSelector, { timeout: 5000 }); // Wait up to 5s
+                    await page.waitForSelector(closeButtonSelector, { timeout: 3000 });
                     await page.click(closeButtonSelector);
-                    console.log('[Puppeteer] Login modal closed.');
+                    console.log('[Puppeteer] A login modal appeared and was closed.');
                 } catch (error) {
                     console.log('[Puppeteer] Login modal did not appear, continuing...');
                 }
-                // --- END OF NEW LOGIC ---
 
                 const isLive = await page.evaluate(() => !document.querySelector('[data-e2e="live-ended-modal"]'));
                 if (!isLive) {
@@ -149,7 +191,6 @@ function createRealtimeStream(username: string) {
     });
 }
 
-// Corrected GET function
 export async function GET(
   request: NextRequest,
   { params }: { params: { username: string } }
@@ -160,6 +201,5 @@ export async function GET(
         return new Response('Username is required', { status: 400 });
     }
     
-    // The createRealtimeStream function should be defined above in this file
     return createRealtimeStream(username);
 }
