@@ -19,25 +19,34 @@ async function loginAndSaveCookies(page: Page) {
     }
 
     console.log('[Puppeteer] No valid cookies found. Performing login...');
-    await page.goto('https://www.tiktok.com/login/phone-or-email/email');
+    await page.goto('https://www.tiktok.com/login/phone-or-email');
+
+    // Wait for and click the "Use phone / email / username" link
+    const useEmailLinkSelector = 'a[href="/login/phone-or-email/email"]';
+    await page.waitForSelector(useEmailLinkSelector);
+    await page.click(useEmailLinkSelector);
     
     // Wait for the form and fill it
-    await page.waitForSelector('input[name="username"]');
-    await page.type('input[name="username"]', TIKTOK_USERNAME);
-    await page.type('input[name="password"]', TIKTOK_PASSWORD);
+    const usernameInputSelector = 'input[name="username"]';
+    await page.waitForSelector(usernameInputSelector);
+    await page.type(usernameInputSelector, TIKTOK_USERNAME);
+    
+    const passwordInputSelector = 'input[name="password"]';
+    await page.type(passwordInputSelector, TIKTOK_PASSWORD);
     
     // Click login and wait for navigation
     await page.click('button[data-e2e="login-button"]');
     await page.waitForNavigation({ waitUntil: 'networkidle2' });
 
     // Check for login success (e.g., by looking for a profile icon)
-    await page.waitForSelector('[data-e2e="header-avatar"]');
+    await page.waitForSelector('[data-e2e="header-avatar"]', { timeout: 10000 });
     
     // Save cookies to file
     const cookies = await page.cookies();
     await fs.writeFile(COOKIES_PATH, JSON.stringify(cookies, null, 2));
     console.log('[Puppeteer] Login successful. Cookies saved.');
 }
+
 
 function createRealtimeStream(username: string) {
     let cleanup: (() => Promise<void>) | null = null;
@@ -92,7 +101,6 @@ function createRealtimeStream(username: string) {
                 console.log(`[Puppeteer] Navigating to @${username}'s live page...`);
                 await page.goto(`https://www.tiktok.com/@${username}/live`, { waitUntil: 'networkidle2' });
                 
-                // This is a good check to make sure the page loaded, even after logging in
                  try {
                     console.log('[Puppeteer] Checking for login modal...');
                     const closeButtonSelector = 'div[class*="DivLoginModal"] [class*="DivCloseContainer"]';
@@ -191,11 +199,9 @@ function createRealtimeStream(username: string) {
     });
 }
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { username: string } }
-) {
-    const username = params.username.replace('@', '');
+export async function GET(request: NextRequest) {
+    const pathnameParts = new URL(request.url).pathname.split('/');
+    const username = pathnameParts[pathnameParts.length - 1];
 
     if (!username) {
         return new Response('Username is required', { status: 400 });
