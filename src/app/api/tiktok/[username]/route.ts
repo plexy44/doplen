@@ -1,3 +1,5 @@
+// File: src/app/api/tiktok/[username]/route.ts
+
 import { NextRequest } from 'next/server';
 import puppeteer, { Browser, Page } from 'puppeteer';
 
@@ -46,6 +48,18 @@ function createRealtimeStream(username: string) {
 
                 console.log(`[Puppeteer] Navigating to @${username}'s live page...`);
                 await page.goto(`https://www.tiktok.com/@${username}/live`, { waitUntil: 'networkidle2' });
+                
+                // --- NEW: LOGIC TO HANDLE LOGIN MODAL ---
+                try {
+                    console.log('[Puppeteer] Checking for login modal...');
+                    const closeButtonSelector = 'div[class*="DivLoginModal"] [class*="DivCloseContainer"]';
+                    await page.waitForSelector(closeButtonSelector, { timeout: 5000 }); // Wait up to 5s
+                    await page.click(closeButtonSelector);
+                    console.log('[Puppeteer] Login modal closed.');
+                } catch (error) {
+                    console.log('[Puppeteer] Login modal did not appear, continuing...');
+                }
+                // --- END OF NEW LOGIC ---
 
                 const isLive = await page.evaluate(() => !document.querySelector('[data-e2e="live-ended-modal"]'));
                 if (!isLive) {
@@ -128,7 +142,7 @@ function createRealtimeStream(username: string) {
 
     return new Response(stream, {
         headers: {
-            'Content-Type': 'text-event-stream',
+            'Content-Type': 'text/event-stream',
             'Connection': 'keep-alive',
             'Cache-Control': 'no-cache',
         },
@@ -140,7 +154,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: { username: string } }
 ) {
-    const username = params.username;
+    const username = params.username.replace('@', '');
 
     if (!username) {
         return new Response('Username is required', { status: 400 });
