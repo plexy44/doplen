@@ -61,7 +61,7 @@ export function UsernameForm() {
           )}
         />
         <Button type="submit" className="w-full h-12 text-lg">
-          Analyze Stream
+          Analyse Stream
         </Button>
       </form>
     </Form>
