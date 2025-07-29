@@ -16,6 +16,18 @@ async function createRealtimeStream(username: string, controller: ReadableStream
             // This can happen if the client disconnects, it's safe to ignore.
         }
     };
+    
+    // This function is called to clean up the browser page
+    const cleanup = async () => {
+        if (page) {
+            try {
+                await page.close();
+                console.log(`[Puppeteer] Closed page for @${username}`);
+            } catch (e) {
+                console.error(`[Puppeteer] Error closing page for @${username}:`, e);
+            }
+        }
+    };
 
     try {
         if (!browser) {
@@ -44,57 +56,38 @@ async function createRealtimeStream(username: string, controller: ReadableStream
         console.log(`[Puppeteer] Successfully connected to @${username}'s live stream.`);
         enqueue({ type: 'connected', data: { message: `Connected to @${username}`, userAvatar } });
 
-        // Expose a function to Node.js that can be called from the browser context
         await page.exposeFunction('onNewEvent', (event: object) => {
-            // The shares count is not directly available, so we just pass it through if it exists.
-            const stats = (event as any).data;
-            if((event as any).type === 'stats') {
-               enqueue({ type: 'stats', data: { viewers: stats.viewers, likes: stats.likes, shares: stats.shares || 0 } });
-            } else {
-               enqueue(event);
-            }
+            enqueue(event);
         });
 
-        // Inject the scraping and observation logic into the page
         await page.evaluate(() => {
             const onNewEvent = (window as any).onNewEvent;
 
-            // Function to extract and send stats
             const sendStats = () => {
                 const viewersText = document.querySelector('[data-e2e="live-viewer-count"]')?.textContent || '0';
                 const likesText = document.querySelector('[data-e2e="like-count"]')?.textContent || '0';
                 
                 const parseStat = (text: string) => {
                     text = text.trim().toUpperCase();
-                    if (text.endsWith('K')) return parseFloat(text) * 1000;
-                    if (text.endsWith('M')) return parseFloat(text) * 1000000;
+                    if (text.endsWith('K')) return Math.floor(parseFloat(text) * 1000);
+                    if (text.endsWith('M')) return Math.floor(parseFloat(text) * 1000000);
                     return parseInt(text, 10) || 0;
                 }
 
-                onNewEvent({ type: 'stats', data: { 
-                    viewers: parseStat(viewersText),
-                    likes: parseStat(likesText),
-                    // Shares are not consistently available on the page, so we handle it on the server if a gift event occurs.
-                } });
+                onNewEvent({ type: 'stats', data: { viewers: parseStat(viewersText), likes: parseStat(likesText) } });
             };
 
-            // Initial stat scrape
             sendStats();
+            setInterval(sendStats, 5000);
 
-            // Scrape stats periodically
-            setInterval(sendStats, 5000); // every 5 seconds
-
-            // Watch for new chat messages and gifts
             const eventContainer = document.querySelector('[class*="webcast-im-message_container"]');
             if (eventContainer) {
                 const eventObserver = new MutationObserver((mutations) => {
-                    for (const mutation of mutations) {
-                        for (const node of mutation.addedNodes) {
-                            if (node.nodeType !== Node.ELEMENT_NODE) continue;
-
+                    mutations.forEach((mutation) => {
+                        mutation.addedNodes.forEach((node) => {
+                            if (node.nodeType !== Node.ELEMENT_NODE) return;
                             const element = node as HTMLElement;
                             
-                            // Check for comments
                             const userEl = element.querySelector('[data-e2e="chat-message-username"]') as HTMLElement;
                             const commentEl = element.querySelector('[data-e2e="chat-message-content"]') as HTMLElement;
                             const avatarEl = element.querySelector('img[class*="webcast-im-user-avatar"]') as HTMLImageElement;
@@ -104,58 +97,28 @@ async function createRealtimeStream(username: string, controller: ReadableStream
                                     type: 'comment',
                                     data: {
                                         id: `c${Date.now()}${Math.random()}`,
-                                        user: { name: userEl.innerText, avatar: avatarEl?.src || '' },
-                                        comment: commentEl.innerText
+                                        user: { name: userEl.innerText.trim(), avatar: avatarEl?.src || '' },
+                                        comment: commentEl.innerText.trim()
                                     }
                                 });
-                                continue; // Move to next node
                             }
-
-                            // Check for gifts
-                            const giftUserEl = element.querySelector('[class*="webcast-im-user-info-name"]') as HTMLElement;
-                            const giftDescEl = element.querySelector('[class*="webcast-im-gift-info-content-text-container-text"]') as HTMLElement;
-                            const giftAvatarEl = element.querySelector('img[class*="webcast-im-user-avatar"]') as HTMLImageElement;
-
-                            if(giftUserEl && giftDescEl) {
-                                const giftMatch = giftDescEl.innerText.match(/Sent (.+)/);
-                                if (giftMatch && giftMatch[1]) {
-                                    onNewEvent({
-                                        type: 'gift',
-                                        data: {
-                                            id: `g${Date.now()}${Math.random()}`,
-                                            user: { name: giftUserEl.innerText, avatar: giftAvatarEl?.src || '' },
-                                            giftName: giftMatch[1],
-                                            amount: 1 // Amount is not easily parsable, default to 1
-                                        }
-                                    });
-                                }
-                            }
-                        }
-                    }
+                        });
+                    });
                 });
                 eventObserver.observe(eventContainer, { childList: true, subtree: true });
             }
         });
+        
+        return cleanup;
 
     } catch (err: any) {
         console.error(`[Puppeteer] Error for @${username}:`, err.message);
         enqueue({ type: 'error', data: { message: `User not found or is not live. Please check the username.` } });
         controller.close();
+        await cleanup();
+        return null;
     }
-    
-    // Return a cleanup function to be called when the stream is cancelled
-    return async () => {
-        if (page) {
-            try {
-                await page.close();
-                console.log(`[Puppeteer] Closed page for @${username}`);
-            } catch (e) {
-                console.error(`[Puppeteer] Error closing page for @${username}:`, e);
-            }
-        }
-    };
 }
-
 
 export async function GET(
   request: NextRequest,
@@ -171,13 +134,10 @@ export async function GET(
 
     const stream = new ReadableStream({
         async start(controller) {
-            cleanup = await createRealtimeStream(username, controller);
-            
-            // When the client aborts the request, close the puppeteer page
+            const cleanedUsername = username.startsWith('@') ? username.substring(1) : username;
+            cleanup = await createRealtimeStream(cleanedUsername, controller);
             request.signal.onabort = () => {
-                if (cleanup) {
-                    cleanup();
-                }
+                if (cleanup) cleanup();
                 controller.close();
             };
         },
@@ -190,7 +150,7 @@ export async function GET(
 
     return new Response(stream, {
         headers: {
-            'Content-Type': 'text/event-stream',
+            'Content-Type': 'text-event-stream',
             'Connection': 'keep-alive',
             'Cache-Control': 'no-cache',
         },

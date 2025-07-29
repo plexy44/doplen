@@ -6,11 +6,12 @@ interface LivePageProps {
   };
 }
 
-export default async function LivePage({ params }: LivePageProps) {
-  const username = params.username;
+// This is a Server Component. Its only job is to get the username
+// from the URL and pass it to the interactive Client Component.
+export default function LivePage({ params }: LivePageProps) {
   return (
     <main className="min-h-screen w-full">
-      <LiveEventStream username={username} />
+      <LiveEventStream username={params.username} />
     </main>
   );
 }
