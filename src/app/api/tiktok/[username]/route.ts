@@ -1,3 +1,4 @@
+
 // File: src/app/api/tiktok/[username]/route.ts
 
 import { NextRequest } from 'next/server';
@@ -205,15 +206,14 @@ function createRealtimeStream(username: string) {
     });
 }
 
-// --- API Route Handler ---
-export async function GET(
-    request: NextRequest,
-    { params }: { params: { username: string } }
-) {
-    const username = params.username;
+// --- REPLACE YOUR GET FUNCTION WITH THIS FINAL VERSION ---
+export async function GET(request: NextRequest) {
+    // This is a more robust method to get the username that avoids the params bug
+    const pathnameParts = new URL(request.url).pathname.split('/');
+    const username = pathnameParts[pathnameParts.length - 1];
 
-    if (!username) {
-        return new Response('Username is required', { status: 400 });
+    if (!username || username === 'route.ts') {
+        return new Response('Username is required in the URL path.', { status: 400 });
     }
     
     return createRealtimeStream(username);
