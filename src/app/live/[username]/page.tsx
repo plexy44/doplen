@@ -6,10 +6,11 @@ interface LivePageProps {
   };
 }
 
-export default function LivePage({ params }: LivePageProps) {
+export default async function LivePage({ params }: LivePageProps) {
+  const username = params.username;
   return (
     <main className="min-h-screen w-full">
-      <LiveEventStream username={params.username} />
+      <LiveEventStream username={username} />
     </main>
   );
 }
