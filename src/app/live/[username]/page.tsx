@@ -1,3 +1,6 @@
+// File: src/app/live/[username]/page.tsx
+
+// Make sure the path to your component is correct
 import { LiveEventStream } from '@/components/LiveEventStream';
 
 interface LivePageProps {
@@ -6,9 +9,8 @@ interface LivePageProps {
   };
 }
 
-// This is a Server Component. Its only job is to get the username
-// from the URL and pass it to the interactive Client Component.
-export default async function LivePage({ params }: LivePageProps) {
+// This is the correct, simple structure for a Server Component page
+export default function LivePage({ params }: LivePageProps) {
   return (
     <main className="min-h-screen w-full">
       <LiveEventStream username={params.username} />
