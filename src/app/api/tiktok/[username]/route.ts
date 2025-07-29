@@ -49,7 +49,7 @@ async function createRealtimeStream(username: string, controller: ReadableStream
             // The shares count is not directly available, so we just pass it through if it exists.
             const stats = (event as any).data;
             if((event as any).type === 'stats') {
-               onNewEvent({ type: 'stats', data: { viewers: stats.viewers, likes: stats.likes, shares: stats.shares || 0 } });
+               enqueue({ type: 'stats', data: { viewers: stats.viewers, likes: stats.likes, shares: stats.shares || 0 } });
             } else {
                enqueue(event);
             }
