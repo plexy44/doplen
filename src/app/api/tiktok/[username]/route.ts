@@ -1,4 +1,3 @@
-
 // File: src/app/api/tiktok/[username]/route.ts
 
 import { NextRequest } from 'next/server';
@@ -53,6 +52,7 @@ async function initializeBrowser(): Promise<Browser> {
         await page.type(usernameInputSelector, TIKTOK_USERNAME);
         
         const passwordInputSelector = 'input[name="password"]';
+        await page.waitForSelector(passwordInputSelector);
         await page.type(passwordInputSelector, TIKTOK_PASSWORD);
         
         await page.click('button[data-e2e="login-button"]');
