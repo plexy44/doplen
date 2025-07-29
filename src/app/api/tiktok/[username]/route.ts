@@ -2,52 +2,84 @@
 
 import { NextRequest } from 'next/server';
 import puppeteer, { Browser, Page } from 'puppeteer';
-import fs from 'fs/promises'; // For reading/writing cookies
+import fs from 'fs/promises';
 
-// Load credentials securely from environment variables
+// --- Configuration ---
 const TIKTOK_USERNAME = process.env.TIKTOK_USERNAME;
 const TIKTOK_PASSWORD = process.env.TIKTOK_PASSWORD;
 const COOKIES_PATH = './tiktok_cookies.json';
-
 export const dynamic = 'force-dynamic';
 
-let browser: Browser | null = null;
+// --- Global Browser Instance ---
+// This promise will resolve to a logged-in browser instance.
+let browserPromise: Promise<Browser>;
 
-async function loginAndSaveCookies(page: Page) {
-    if (!TIKTOK_USERNAME || !TIKTOK_PASSWORD) {
-        throw new Error('TikTok username or password not set in .env file');
+// --- Initialization Function ---
+async function initializeBrowser(): Promise<Browser> {
+    console.log('[Puppeteer] Initializing browser...');
+    const browser = await puppeteer.launch({ 
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox'] 
+    });
+
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+
+    // Check if we have saved cookies
+    try {
+        const cookiesString = await fs.readFile(COOKIES_PATH, 'utf8');
+        const cookies = JSON.parse(cookiesString);
+        await page.setCookie(...cookies);
+        console.log('[Puppeteer] Session cookies loaded successfully.');
+        await page.goto('https://www.tiktok.com/foryou'); // Navigate to check if login is valid
+        await page.waitForSelector('[data-e2e="header-avatar"]', { timeout: 10000 });
+        console.log('[Puppeteer] Cookie login successful.');
+    } catch (error) {
+        // If cookies are invalid or don't exist, perform a full login
+        console.log('[Puppeteer] No valid cookies found. Performing full login...');
+        if (!TIKTOK_USERNAME || !TIKTOK_PASSWORD) {
+            throw new Error('TikTok username or password not set in .env file for login.');
+        }
+
+        await page.goto('https://www.tiktok.com/login/phone-or-email');
+
+        // Click "Log in with email or username"
+        const useEmailLinkSelector = 'a[href="/login/phone-or-email/email"]';
+        await page.waitForSelector(useEmailLinkSelector);
+        await page.click(useEmailLinkSelector);
+        
+        // Fill in the form
+        const usernameInputSelector = 'input[name="username"]';
+        await page.waitForSelector(usernameInputSelector);
+        await page.type(usernameInputSelector, TIKTOK_USERNAME);
+        
+        const passwordInputSelector = 'input[name="password"]';
+        await page.type(passwordInputSelector, TIKTOK_PASSWORD);
+        
+        await page.click('button[data-e2e="login-button"]');
+        await page.waitForNavigation({ waitUntil: 'networkidle2' });
+
+        // Verify successful login
+        await page.waitForSelector('[data-e2e="header-avatar"]', { timeout: 15000 });
+        
+        // Save new cookies
+        const cookies = await page.cookies();
+        await fs.writeFile(COOKIES_PATH, JSON.stringify(cookies, null, 2));
+        console.log('[Puppeteer] Login successful. Cookies saved.');
     }
 
-    console.log('[Puppeteer] No valid cookies found. Performing login...');
-    await page.goto('https://www.tiktok.com/login/phone-or-email');
-
-    // Wait for and click the "Use phone / email / username" link
-    const useEmailLinkSelector = 'a[href="/login/phone-or-email/email"]';
-    await page.waitForSelector(useEmailLinkSelector);
-    await page.click(useEmailLinkSelector);
-    
-    // Wait for the form and fill it
-    const usernameInputSelector = 'input[name="username"]';
-    await page.waitForSelector(usernameInputSelector);
-    await page.type(usernameInputSelector, TIKTOK_USERNAME);
-    
-    const passwordInputSelector = 'input[name="password"]';
-    await page.type(passwordInputSelector, TIKTOK_PASSWORD);
-    
-    // Click login and wait for navigation
-    await page.click('button[data-e2e="login-button"]');
-    await page.waitForNavigation({ waitUntil: 'networkidle2' });
-
-    // Check for login success (e.g., by looking for a profile icon)
-    await page.waitForSelector('[data-e2e="header-avatar"]', { timeout: 10000 });
-    
-    // Save cookies to file
-    const cookies = await page.cookies();
-    await fs.writeFile(COOKIES_PATH, JSON.stringify(cookies, null, 2));
-    console.log('[Puppeteer] Login successful. Cookies saved.');
+    await page.close();
+    return browser;
 }
 
+// --- Start Initialization on Server Load ---
+browserPromise = initializeBrowser().catch(err => {
+    console.error("FATAL: Failed to initialize browser. The app may not function correctly.", err);
+    // Exit gracefully if the browser can't even start.
+    process.exit(1);
+});
 
+// --- Main Streaming Function ---
 function createRealtimeStream(username: string) {
     let cleanup: (() => Promise<void>) | null = null;
 
@@ -60,11 +92,12 @@ function createRealtimeStream(username: string) {
                     // This can happen if the client disconnects, it's safe to ignore.
                 }
             };
-            
-            let page: Page | null = null;
 
+            const browser = await browserPromise;
+            let page: Page | null = null;
+            
             cleanup = async () => {
-                if (page) {
+                if (page && !page.isClosed()) {
                     try {
                         await page.close();
                         console.log(`[Puppeteer] Closed page for @${username}`);
@@ -75,51 +108,26 @@ function createRealtimeStream(username: string) {
             };
 
             try {
-                if (!browser) {
-                    console.log('[Puppeteer] Launching new browser instance...');
-                    browser = await puppeteer.launch({ 
-                        headless: true,
-                        args: ['--no-sandbox', '--disable-setuid-sandbox'] 
-                    });
-                }
-                
                 page = await browser.newPage();
                 await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
 
-                // --- NEW: LOAD COOKIES OR LOGIN ---
-                try {
-                    const cookiesString = await fs.readFile(COOKIES_PATH, 'utf8');
-                    const cookies = JSON.parse(cookiesString);
-                    await page.setCookie(...cookies);
-                    console.log('[Puppeteer] Session cookies loaded successfully.');
-                } catch (error) {
-                    // If cookies don't exist or are invalid, perform a login
-                    await loginAndSaveCookies(page);
-                }
-                // --- END OF NEW LOGIC ---
+                // Load cookies for this page instance
+                const cookiesString = await fs.readFile(COOKIES_PATH, 'utf8');
+                const cookies = JSON.parse(cookiesString);
+                await page.setCookie(...cookies);
 
                 console.log(`[Puppeteer] Navigating to @${username}'s live page...`);
                 await page.goto(`https://www.tiktok.com/@${username}/live`, { waitUntil: 'networkidle2' });
                 
-                 try {
-                    console.log('[Puppeteer] Checking for login modal...');
-                    const closeButtonSelector = 'div[class*="DivLoginModal"] [class*="DivCloseContainer"]';
-                    await page.waitForSelector(closeButtonSelector, { timeout: 3000 });
-                    await page.click(closeButtonSelector);
-                    console.log('[Puppeteer] A login modal appeared and was closed.');
-                } catch (error) {
-                    console.log('[Puppeteer] Login modal did not appear, continuing...');
-                }
-
                 const isLive = await page.evaluate(() => !document.querySelector('[data-e2e="live-ended-modal"]'));
                 if (!isLive) {
-                    throw new Error('User is not live or the session has ended.');
+                    throw new Error('User is not live or their session has ended.');
                 }
 
                 const userAvatar = await page.evaluate(() => {
                     return (document.querySelector('[data-e2e="live-user-avatar"] img') as HTMLImageElement)?.src || '';
                 });
-
+                
                 console.log(`[Puppeteer] Successfully connected to @${username}'s live stream.`);
                 enqueue({ type: 'connected', data: { message: `Connected to @${username}`, userAvatar } });
 
@@ -175,7 +183,6 @@ function createRealtimeStream(username: string) {
                         eventObserver.observe(eventContainer, { childList: true, subtree: true });
                     }
                 });
-
             } catch (err: any) {
                 console.error(`[Puppeteer] Error for @${username}:`, err.message);
                 enqueue({ type: 'error', data: { message: `User not found or is not live. Please check the username.` } });
@@ -199,6 +206,7 @@ function createRealtimeStream(username: string) {
     });
 }
 
+// --- API Route Handler ---
 export async function GET(request: NextRequest) {
     const pathnameParts = new URL(request.url).pathname.split('/');
     const username = pathnameParts[pathnameParts.length - 1];
