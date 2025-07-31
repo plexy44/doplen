@@ -42,11 +42,7 @@ async function initializeBrowser(): Promise<Browser> {
         }
 
         // --- CORRECTED LOGIN FLOW ---
-        await page.goto('https://www.tiktok.com/login/phone-or-email');
-
-        const useEmailLinkSelector = 'a[href="/login/phone-or-email/email"]';
-        await page.waitForSelector(useEmailLinkSelector);
-        await page.click(useEmailLinkSelector);
+        await page.goto('https://www.tiktok.com/login/phone-or-email/email');
         
         const usernameInputSelector = 'input[name="username"]';
         await page.waitForSelector(usernameInputSelector);
